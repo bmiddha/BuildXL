@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 using System;
+using System.IO;
 using System.Diagnostics;
 using System.Linq;
 using BuildXL.Demo;
+using BuildXL.Processes;
 using BuildXL.Utilities.Core;
 
 namespace BuildXL.SandboxDemo
@@ -34,17 +36,7 @@ namespace BuildXL.SandboxDemo
             var fileAccessReporter = new FileAccessReporter();
             var result = fileAccessReporter.RunProcessUnderSandbox(tool, arguments).GetAwaiter().GetResult();
 
-            var accessesByPath = result
-                .FileAccesses
-                .Select(access => access.GetPath(fileAccessReporter.PathTable))
-                .Distinct(OperatingSystemHelper.PathComparer);
-
-            var displayAccesses = string.Join(Environment.NewLine, accessesByPath);
-
-            Console.WriteLine($"Process '{tool}' ran under BuildXL sandbox with arguments '{arguments}' and returned with exit code '{result.ExitCode}'. Sandbox reports {result.FileAccesses.Count} file accesses:");
-            Console.WriteLine(displayAccesses);
-
-            return 0;
+            return result.ExitCode;
         }
 
         private static void PrintUsage()
