@@ -447,6 +447,16 @@ void BxlObserver::LogDebug(pid_t pid, const char *fmt, ...)
 // If the pair is not in cache and addEntryIfMissing is true, attempts to add the pair to cache.
 bool BxlObserver::CheckCache(buildxl::linux::EventType event, const string &path, bool addEntryIfMissing)
 {
+    if (event == buildxl::linux::EventType::kGenericWrite ||
+        event == buildxl::linux::EventType::kLink ||
+        event == buildxl::linux::EventType::kUnlink ||
+        event == buildxl::linux::EventType::kCreate ||
+        event == buildxl::linux::EventType::kClone ||
+        event == buildxl::linux::EventType::kRename
+    )
+    {
+        return false;
+    }
     // This code could possibly be executing from an interrupt routine or from who knows where,
     // so to avoid deadlocks it's essential to never block here indefinitely.
     if (!cacheMtx_.try_lock_for(chrono::milliseconds(1)))

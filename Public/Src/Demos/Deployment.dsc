@@ -8,9 +8,7 @@ namespace Deployment {
     
     const deployment: Deployment.Definition = {
         contents: [
-            BlockAccesses.exe,
-            ReportAccesses.exe,
-            ReportProcesses.exe,
+            ReportAccesses.exe
         ]
     };
 

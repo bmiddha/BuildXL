@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using BuildXL.Processes;
 using BuildXL.Utilities.Core;
@@ -10,6 +11,51 @@ using BuildXL.Utilities.Instrumentation.Common;
 
 namespace BuildXL.Demo
 {
+    public class DemoDetoursEventListener : IDetoursEventListener
+    {
+        private StreamWriter outputFile;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="DemoDetoursEventListener"/> class.
+        /// </summary>
+        public DemoDetoursEventListener(StreamWriter outputFile)
+        {
+            this.outputFile = outputFile;
+            SetMessageHandlingFlags(MessageHandlingFlags.FileAccessNotify);
+        }
+
+        /// <inheritdoc />
+        public override void HandleFileAccess(FileAccessData fileAccessData)
+        {
+            if (fileAccessData.RequestedAccess != RequestedAccess.None)
+            {
+                var requestedAccessPrefix = fileAccessData.RequestedAccess switch
+                {
+                    RequestedAccess.Write => "W",
+                    RequestedAccess.Enumerate => "E",
+                    _ => "R",
+                };
+                outputFile.WriteLine($"{requestedAccessPrefix} {fileAccessData.Path}");
+                outputFile.Flush();
+            }
+        }
+
+        /// <inheritdoc />
+        public override void HandleDebugMessage(DebugData debugData)
+        {
+        }
+
+        /// <inheritdoc />
+        public override void HandleProcessData(ProcessData processData)
+        {
+        }
+
+        /// <inheritdoc />
+        public override void HandleProcessDetouringStatus(ProcessDetouringStatusData data)
+        {
+        }
+    }
+
     /// <summary>
     /// A very simplistic use of BuildXL sandbox, just meant for observing file accesses
     /// </summary>
@@ -30,25 +76,46 @@ namespace BuildXL.Demo
         /// <summary>
         /// Runs the given tool with the provided arguments under the BuildXL sandbox and reports the result in a <see cref="SandboxedProcessResult"/>
         /// </summary>
-        public Task<SandboxedProcessResult> RunProcessUnderSandbox(string pathToProcess, string arguments)
+        public async Task<SandboxedProcessResult> RunProcessUnderSandbox(string pathToProcess, string arguments)
         {
-            var info = new SandboxedProcessInfo(
-                PathTable,
-                this,
-                pathToProcess,
-                CreateManifestToAllowAllAccesses(PathTable),
-                disableConHostSharing: false,
-                loggingContext: m_loggingContext)
+            using (FileStream stream = new FileStream((IntPtr)3, FileAccess.Write))
             {
-                Arguments = arguments,
-                WorkingDirectory = Directory.GetCurrentDirectory(),
-                PipSemiStableHash = 0,
-                PipDescription = "Simple sandbox demo"
-            };
+                using (StreamWriter outputFile = new StreamWriter(stream))
+                {
+                    var info = new SandboxedProcessInfo(
+                        PathTable,
+                        this,
+                        pathToProcess,
+                        CreateManifestToAllowAllAccesses(PathTable),
+                        disableConHostSharing: false,
+                        loggingContext: m_loggingContext,
+                        detoursEventListener: new DemoDetoursEventListener(outputFile))
+                    {
+                        Arguments = arguments,
+                        WorkingDirectory = Directory.GetCurrentDirectory(),
+                        EnvironmentVariables = BuildParameters
+                            .GetFactory()
+                            .PopulateFromEnvironment(),
+                        PipSemiStableHash = 0,
+                        PipDescription = "Simple sandbox demo",
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardOutputObserver = stdOutStr => Console.WriteLine(stdOutStr),
 
-            var process = SandboxedProcessFactory.StartAsync(info, forceSandboxing: true).GetAwaiter().GetResult();
+                        StandardErrorEncoding = Encoding.UTF8,
+                        StandardErrorObserver = stdErrStr => Console.Error.WriteLine(stdErrStr),
+                    };
 
-            return process.GetResultAsync();
+                    info.SandboxConnection = new SandboxConnectionLinuxDetours((int status, string description) =>
+                    {
+                        info.SandboxConnection?.Dispose();
+                    });
+
+                    var process = SandboxedProcessFactory.StartAsync(info, forceSandboxing: true).GetAwaiter().GetResult();
+
+                    return await process.GetResultAsync();
+                }
+            }
+
         }
 
         /// <nodoc />
@@ -71,23 +138,13 @@ namespace BuildXL.Demo
                 FailUnexpectedFileAccesses = false,
                 ReportFileAccesses = true,
                 MonitorChildProcesses = true,
+                EnableLinuxPTraceSandbox = true,
+                PipId = 1,
+                ExplicitlyReportDirectoryProbes = true,
+                ProbeDirectorySymlinkAsDirectory = true,
             };
 
-            fileAccessManifest.AddScope(
-                AbsolutePath.Create(pathTable, SpecialFolderUtilities.GetFolderPath(Environment.SpecialFolder.Windows)),
-                FileAccessPolicy.MaskAll,
-                FileAccessPolicy.AllowAll);
-
-            fileAccessManifest.AddScope(
-                AbsolutePath.Create(pathTable, SpecialFolderUtilities.GetFolderPath(Environment.SpecialFolder.InternetCache)),
-                FileAccessPolicy.MaskAll,
-                FileAccessPolicy.AllowAll);
-
-            fileAccessManifest.AddScope(
-                AbsolutePath.Create(pathTable, SpecialFolderUtilities.GetFolderPath(Environment.SpecialFolder.History)),
-                FileAccessPolicy.MaskAll,
-                FileAccessPolicy.AllowAll);
-
+            fileAccessManifest.AddScope(AbsolutePath.Invalid, FileAccessPolicy.MaskNothing, FileAccessPolicy.MaskNothing);
 
             return fileAccessManifest;
         }
