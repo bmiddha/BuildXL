@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using BuildXL.Processes;
 using BuildXL.Utilities.Core;
 using BuildXL.Utilities.Instrumentation.Common;
+using Microsoft.Win32.SafeHandles;
 
 namespace BuildXL.Demo
 {
@@ -78,14 +79,41 @@ namespace BuildXL.Demo
         /// </summary>
         public async Task<SandboxedProcessResult> RunProcessUnderSandbox(string pathToProcess, string arguments)
         {
-            using (FileStream stream = new FileStream((IntPtr)3, FileAccess.Write))
+
+            string pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (pathEnv == null)
+            {
+                return null;
+            }
+
+            string[] paths = pathEnv.Split(Path.PathSeparator);
+            string executablePath = null;
+            foreach (string path in paths)
+            {
+                string fullPath = Path.Combine(path, pathToProcess);
+                if (File.Exists(fullPath))
+                {
+                    executablePath = fullPath;
+                }
+            }
+            if (executablePath == null)
+            {
+                Console.WriteLine($"Could not find {pathToProcess} in PATH");
+                return null;
+            }
+
+
+            using (FileStream stream = new FileStream(new SafeFileHandle((IntPtr)3, false), FileAccess.Write))
             {
                 using (StreamWriter outputFile = new StreamWriter(stream))
                 {
+                    var envVars = BuildParameters
+                            .GetFactory()
+                            .PopulateFromEnvironment();
                     var info = new SandboxedProcessInfo(
                         PathTable,
                         this,
-                        pathToProcess,
+                        executablePath,
                         CreateManifestToAllowAllAccesses(PathTable),
                         disableConHostSharing: false,
                         loggingContext: m_loggingContext,
@@ -93,9 +121,7 @@ namespace BuildXL.Demo
                     {
                         Arguments = arguments,
                         WorkingDirectory = Directory.GetCurrentDirectory(),
-                        EnvironmentVariables = BuildParameters
-                            .GetFactory()
-                            .PopulateFromEnvironment(),
+                        EnvironmentVariables = envVars,
                         PipSemiStableHash = 0,
                         PipDescription = "Simple sandbox demo",
                         StandardOutputEncoding = Encoding.UTF8,
